@@ -3,7 +3,7 @@ to a ipset to block in iptables.
 
 There are many other tools already that do similar things, this is mine. 
 
-<h3>IPTables example</h3>
+###IPTables example
 
 The below example shows how to mix the unwelcome ipset and iptables built in rules for rate limitting 
 to ward off pesky brute force attacks
@@ -22,6 +22,6 @@ to ward off pesky brute force attacks
 -A INPUT -j REJECT --reject-with icmp-host-prohibited
 ```
 
-<h3>Required Packages</h3>
--python-sqlalchemy
--python-configparser
+###Required Packages
+- python-sqlalchemy
+- python-configparser
