@@ -3,11 +3,12 @@ to a ipset to block in iptables.
 
 There are many other tools already that do similar things, this is mine. 
 
-IPTables example
+<h3>IPTables example</h3>
 
 The below example shows how to mix the unwelcome ipset and iptables built in rules for rate limitting 
 to ward off pesky brute force attacks
 
+```
 -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
 -A INPUT -p all -m set  --match-set unwelcome src -j DROP
 -A INPUT -p icmp -j ACCEPT
@@ -19,8 +20,8 @@ to ward off pesky brute force attacks
 -A INPUT -p tcp -m tcp --dport 22 -m state --state NEW -j ACCEPT
 -A INPUT -i lo -j ACCEPT
 -A INPUT -j REJECT --reject-with icmp-host-prohibited
+```
 
-
-Required Packages:
+<h3>Required Packages</h3>
 -python-sqlalchemy
 -python-configparser
