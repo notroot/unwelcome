@@ -6,7 +6,7 @@ CREATE TABLE "hosts" (
 	first_seen DATETIME, 
 	last_seen DATETIME, 
 	times_seen INTEGER default 0, 
-	times_ban INTEGER default 0, 
+	times_banned INTEGER default 0, 
 	PRIMARY KEY (ip)
 );
 CREATE TABLE unwelcome (
@@ -15,4 +15,10 @@ CREATE TABLE unwelcome (
 	banned_for INTEGER,
 	PRIMARY KEY (ip)
 );
+CREATE TABLE configs (
+	config TEXT,
+	setting TEXT,
+	PRIMARY KEY (config)
+);
 
+INSERT INTO configs VALUES ('last_run', datetime('now','-7 days'));
