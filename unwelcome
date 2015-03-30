@@ -67,12 +67,14 @@ def getTime(line):
 def parseLog(log):
 	db = getDB()
 	banned = 0
-	
+	lines_scanned = 0
 	cur = db.execute('SELECT setting FROM configs WHERE config="last_run"')
 	last_run = cur.fetchone()[0]
 	last_run = datetime.strptime(last_run, "%Y-%m-%d %H:%M:%S")
 	
 	print "Last run: %s" % last_run
+	#tm_delta = datetime.now() - last_run
+	#print "Delta %s" % tm_delta
 
 	LOG = open(log, 'r')	
 
@@ -88,6 +90,7 @@ def parseLog(log):
 			
 		ip = re.search("([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})", line)
 		if ip:
+			lines_scanned += 1
 			ip_addr = ip.group(0)
 			#print (ip_addr)
 			auth = re.search("Failed password", line)
@@ -118,7 +121,7 @@ def parseLog(log):
 			banned += 1
 			unwelcome(ip)
 
-	db.execute("UPDATE configs SET setting= DATETIME('now') where config='last_run'")
+	db.execute("UPDATE configs SET setting= DATETIME('now','localtime') WHERE config='last_run';")
 	db.commit()
 
 	print "Banned %s IPs" % banned
