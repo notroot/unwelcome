@@ -1,11 +1,13 @@
+# Unwelcome
+
 Unwelcome is a Python tool for monitoring brute force SSH attempts and adding them
-to a ipset to block in iptables. 
+to a ipset to block in iptables.
 
-There are many other tools already that do similar things, this is mine. 
+There are many other tools already that do similar things, this is mine.
 
-###IPTables example
+### IPTables example
 
-The below example shows how to mix the unwelcome ipset and iptables built in rules for rate limitting 
+The below example shows how to mix the unwelcome ipset and iptables built in rules for rate limitting
 to ward off pesky brute force attacks
 
 ```
@@ -21,6 +23,9 @@ to ward off pesky brute force attacks
 -A INPUT -j REJECT --reject-with icmp-host-prohibited
 ```
 
-###Required Packages
+### Required Packages
 - python-sqlalchemy
 - python-configparser
+
+## Setup Instrunctions
+Wouldn't it be nice if there were setup instructions?

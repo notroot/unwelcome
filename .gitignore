@@ -1,2 +1,7 @@
 *.swp
 *.bk
+*.pyc
+dist/*
+build/*
+unwelcome.egg-info/
+venv
