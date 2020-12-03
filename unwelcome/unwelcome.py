@@ -2,6 +2,7 @@
 from collections import Counter
 from datetime import datetime, date
 import argparse
+import json
 import os
 import re
 import sqlite3
@@ -19,15 +20,17 @@ class UnwelcomeError(Exception):
 
 
 class Unwelcome:
-    def __init__(self, config_file=None, dry_run=False):
+    def __init__(self, config_file=None, dry_run=False, log_ips=False):
 
         self.audit_log = "/var/log/auth.log"
+        self.log_dir = "/var/lib/unwelcome/logs"
         self.interval = 3
         self.interval_count = 21
         self.interval_multiple = 3
         self.max_ban = 90
 
         self.dry_run = dry_run
+        self.log_ips = log_ips
 
         if config_file:
             self.__load_config(config_file)
@@ -154,7 +157,6 @@ class Unwelcome:
         for ip in ips:
             if ips[ip] > self.interval_count:
                 banned += 1
-                self.add_unwelcome(ip)
 
             if self.dry_run:
                 continue
@@ -166,13 +168,29 @@ class Unwelcome:
                              (ip, ips[ip], datetime.now(), ip))
 
             db.commit()
+            if ips[ip] > self.interval_count:
+                self.add_unwelcome(ip)
 
         if not self.dry_run:
             db.execute("UPDATE configs SET setting= DATETIME('now','localtime') WHERE config='last_run';")
             db.commit()
 
+        self.log_ips_json(ips)
+
         print(f"Processed {lines_matched} matching lines")
         print(f"Banned {banned} IPs")
+
+    def log_ips_json(self, ips):
+        """ log all the seen IPs to a json with seen count, useful for tuning """
+        if self.log_ips:
+            if not os.path.isdir(self.log_dir):
+                os.mkdirs(self.log_dir, exist_ok=True)
+
+            date_code = datetime.now().strftime("%Y%m%d-%H%M%S")
+            outfile_name = f"failed_auth_ips_{date_code}.json"
+            outfile_path = os.path.join(self.log_dir, outfile_name)
+            with open(outfile_path, 'w') as out_json:
+                json.dump(ips, out_json)
 
     def get_times_banned(self, ip):
         db = self.__get_db()
@@ -257,9 +275,10 @@ def main():
     parser.add_argument("--log", type=str, help="Path to log to parse, defaults to /var/log/auth.log")
     parser.add_argument("--from-scratch", action="store_true", help="Process logfile from begining instead of last run time")
     parser.add_argument("--dry-run", action="store_true", help="Parse log and count up bans only, do not altere database or ipset")
+    parser.add_argument("--log-ips", action="store_true", help="Store seen IPs to JSON for each run, useful for tuning thresholds")
     args = parser.parse_args()
 
-    uw = Unwelcome(dry_run=args.dry_run)
+    uw = Unwelcome(dry_run=args.dry_run, log_ips=args.log_ips)
     uw.precheck()
 
     print("Running %s" % datetime.now().ctime())
