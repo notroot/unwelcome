@@ -2,12 +2,13 @@
 from collections import Counter
 from datetime import datetime, date
 import argparse
+import json
+import logging
 import os
 import re
 import sqlite3
 import subprocess
 import sys
-
 
 class UnwelcomeError(Exception):
     def __init__(self, message="Generic Unwelcome Error"):
@@ -19,18 +20,30 @@ class UnwelcomeError(Exception):
 
 
 class Unwelcome:
-    def __init__(self, config_file=None, dry_run=False):
+    def __init__(self, config_file=None, dry_run=False, log_ips=False):
 
         self.audit_log = "/var/log/auth.log"
+        self.log_dir = "/var/lib/unwelcome/logs"
         self.interval = 3
         self.interval_count = 21
         self.interval_multiple = 3
         self.max_ban = 90
 
         self.dry_run = dry_run
+        self.log_ips = log_ips
 
         if config_file:
             self.__load_config(config_file)
+
+        if not os.path.isdir(self.log_dir):
+            os.mkdirs(self.log_dir, exist_ok=True)
+
+        self.log_file = os.path.join(self.log_dir, "unwelcome.log")
+        if self.dry_run:
+            # log to console for dry-run
+            logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
+        else:
+            logging.basicConfig(filename=self.log_file, filemode='a', format='%(asctime)s - %(message)s', level=logging.INFO)
 
         self.conn = self.__connect_db()
 
@@ -80,7 +93,7 @@ class Unwelcome:
         ret = subprocess.call(['ipset', 'list', 'unwelcome'], stdout=FNULL, stderr=subprocess.STDOUT)
 
         if ret != 0:
-            print("unwelcome ipset must exists")
+            print("unwelcome ipset must exists", file=sys.stderr)
             sys.exit(1)
 
         return 0
@@ -93,8 +106,7 @@ class Unwelcome:
         if match:
             date_string = match.groups()[0]
         else:
-            print("line not matchin")
-            return 99
+            return None
 
         year = date.today().year
         date_string = "%s %s" % (date_string, year)
@@ -106,6 +118,8 @@ class Unwelcome:
         if not log:
             log = self.audit_log
 
+        logging.info(f"Processing {log}")
+
         db = self.__get_db()
         banned = 0
         lines_matched = 0
@@ -115,8 +129,7 @@ class Unwelcome:
         if from_scratch:
             last_run = datetime.strptime("1970-01-01 00:00:01", "%Y-%m-%d %H:%M:%S")
 
-        print("Last run: %s" % last_run)
-
+        logging.info(f"Last run: {last_run}")
         LOG = open(log, 'r')
 
         ips = Counter()
@@ -124,8 +137,10 @@ class Unwelcome:
 
         for line in LOG:
             line_time = self.get_time(line)
-
-            if line_time < last_run:
+            if not line_time:
+                # unable to process time from line
+                continue
+            elif line_time < last_run:
                 continue
 
             # message repeated 4 times: [ Failed password for root from 87.241.1.186 port 58263 ssh2]
@@ -154,7 +169,6 @@ class Unwelcome:
         for ip in ips:
             if ips[ip] > self.interval_count:
                 banned += 1
-                self.add_unwelcome(ip)
 
             if self.dry_run:
                 continue
@@ -166,13 +180,27 @@ class Unwelcome:
                              (ip, ips[ip], datetime.now(), ip))
 
             db.commit()
+            if ips[ip] > self.interval_count:
+                self.add_unwelcome(ip)
 
         if not self.dry_run:
             db.execute("UPDATE configs SET setting= DATETIME('now','localtime') WHERE config='last_run';")
             db.commit()
 
-        print(f"Processed {lines_matched} matching lines")
-        print(f"Banned {banned} IPs")
+        self.log_ips_json(ips)
+
+        logging.info(f"Processed {lines_matched} matching lines")
+        logging.info(f"Banned {banned} IPs")
+
+    def log_ips_json(self, ips):
+        """ log all the seen IPs to a json with seen count, useful for tuning """
+        if self.log_ips:
+            date_code = datetime.now().strftime("%Y%m%d-%H%M%S")
+            outfile_name = f"failed_auth_ips_{date_code}.json"
+            outfile_path = os.path.join(self.log_dir, outfile_name)
+            logging.info(f"Saving seen IPs to {outfile_path}")
+            with open(outfile_path, 'w') as out_json:
+                json.dump(ips, out_json)
 
     def get_times_banned(self, ip):
         db = self.__get_db()
@@ -199,7 +227,7 @@ class Unwelcome:
         if ban_period > self.max_ban:
             ban_period = self.max_ban
 
-        print("adding %s for %s" % (ip, ban_period))
+        logging.info(f"Adding {ip} for {ban_period}")
         if self.dry_run:
             return
 
@@ -240,7 +268,7 @@ class Unwelcome:
             db.execute("DELETE FROM unwelcome WHERE date(banned_on, '+%s days') <= date('now');" % interval)
             db.commit()
 
-        print("Remove %s IPs from unwelcome" % removed)
+        logging.info(f"Removed {removed} IPs from unwelcome list")
 
     def save_ipset(self):
         if self.dry_run:
@@ -257,12 +285,12 @@ def main():
     parser.add_argument("--log", type=str, help="Path to log to parse, defaults to /var/log/auth.log")
     parser.add_argument("--from-scratch", action="store_true", help="Process logfile from begining instead of last run time")
     parser.add_argument("--dry-run", action="store_true", help="Parse log and count up bans only, do not altere database or ipset")
+    parser.add_argument("--log-ips", action="store_true", help="Store seen IPs to JSON for each run, useful for tuning thresholds")
     args = parser.parse_args()
 
-    uw = Unwelcome(dry_run=args.dry_run)
+    uw = Unwelcome(dry_run=args.dry_run, log_ips=args.log_ips)
     uw.precheck()
 
-    print("Running %s" % datetime.now().ctime())
     uw.process_log(from_scratch=args.from_scratch)
 
     uw.clean_list()
