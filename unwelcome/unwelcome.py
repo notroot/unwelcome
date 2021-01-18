@@ -10,6 +10,7 @@ import sqlite3
 import subprocess
 import sys
 
+
 class UnwelcomeError(Exception):
     def __init__(self, message="Generic Unwelcome Error"):
         self.message = message
@@ -24,10 +25,9 @@ class Unwelcome:
 
         self.audit_log = "/var/log/auth.log"
         self.log_dir = "/var/lib/unwelcome/logs"
-        self.interval = 3
-        self.interval_count = 21
-        self.interval_multiple = 3
-        self.max_ban = 90
+        self.ban_length = 3  # length of ban in days for first offense
+        self.ban_threshold = 21  # number of timees seen since last run to earn a ban
+        self.max_ban = 90  # maxium number of days for a ban
 
         self.dry_run = dry_run
         self.log_ips = log_ips
@@ -57,14 +57,16 @@ class Unwelcome:
 
         config.read(config_file)
 
+        if "Options" in config.sections():
+            options = config['Options']
+        else:
+            raise UnwelcomeError("Options section missing from config file")
+
         try:
-            self.audit_log = config.get('Options', 'audit_log')
-            self.interval = config.getint('Options', 'interval')
-            self.interval_count = config.getint('Options', 'interval_count')
-            self.interval_multiple = config.getint('Options', 'interval_multiple')
-            self.max_ban = config.getint('Options', 'max_ban')
-        except configparser.NoSectionError:
-            raise UnwelcomeError("Missing [Options] section in config")
+            self.audit_log = options.get('audit_log', self.audit_log)
+            self.ban_length = options.getint('ban_length', self.ban_length)
+            self.ban_threshold = options.getint('ban_threshold', self.ban_threshold)
+            self.max_ban = options.getint('max_ban', self.max_ban)
         except configparser.NoOptionError as e:
             raise UnwelcomeError(f"Error processing config file: {e}")
 
@@ -167,7 +169,7 @@ class Unwelcome:
                 continue
 
         for ip in ips:
-            if ips[ip] > self.interval_count:
+            if ips[ip] > self.ban_threshold:
                 banned += 1
 
             if self.dry_run:
@@ -180,7 +182,7 @@ class Unwelcome:
                              (ip, ips[ip], datetime.now(), ip))
 
             db.commit()
-            if ips[ip] > self.interval_count:
+            if ips[ip] > self.ban_threshold:
                 self.add_unwelcome(ip)
 
         if not self.dry_run:
@@ -217,17 +219,15 @@ class Unwelcome:
         times_banned = self.get_times_banned(ip)
         times_banned += 1
 
-        if times_banned == 0:
-            ban_period = self.interval
-        if times_banned > 100:  # safety cutoff
+        if times_banned > 10:  # safety cutoff to avoid overflows
             ban_period = self.max_ban
         else:
-            ban_period = self.interval ** times_banned
+            ban_period = self.ban_length ** times_banned
 
         if ban_period > self.max_ban:
             ban_period = self.max_ban
 
-        logging.info(f"Adding {ip} for {ban_period}")
+        logging.info(f"Adding {ip} for {ban_period}, banned count: {times_banned}")
         if self.dry_run:
             return
 
@@ -256,17 +256,16 @@ class Unwelcome:
 
         for interval in ban_intervals:
             interval = int(interval['banned_for'])
-            cur = db.execute("SELECT ip FROM unwelcome WHERE date(banned_on, '+%s days') <= date('now');" % interval)
-            ips = cur.fetchall()
+            cur = db.execute("SELECT ip FROM unwelcome WHERE date(banned_on, '+%s days') <= date('now') AND banned_for = %s;" % (interval, interval))
+            hosts = cur.fetchall()
 
-            for ip in ips:
-                ip = ip['ip']
+            for host in hosts:
+                ip = host['ip']
                 FNULL = open(os.devnull, 'w')
                 subprocess.call(['ipset', 'del', 'unwelcome', ip], stdout=FNULL, stderr=subprocess.STDOUT)
+                db.execute("DELETE FROM unwelcome WHERE ip=%s" % ip)
+                db.commit()
                 removed += 1
-
-            db.execute("DELETE FROM unwelcome WHERE date(banned_on, '+%s days') <= date('now');" % interval)
-            db.commit()
 
         logging.info(f"Removed {removed} IPs from unwelcome list")
 
@@ -283,12 +282,16 @@ class Unwelcome:
 def main():
     parser = argparse.ArgumentParser(description="Unwelcome process the audit log for failed login attempts and creates an ipset of unwelcome IPs")
     parser.add_argument("--log", type=str, help="Path to log to parse, defaults to /var/log/auth.log")
+    parser.add_argument("--config", type=str, help="Path to config file for overriding defaults")
     parser.add_argument("--from-scratch", action="store_true", help="Process logfile from begining instead of last run time")
     parser.add_argument("--dry-run", action="store_true", help="Parse log and count up bans only, do not altere database or ipset")
     parser.add_argument("--log-ips", action="store_true", help="Store seen IPs to JSON for each run, useful for tuning thresholds")
     args = parser.parse_args()
 
-    uw = Unwelcome(dry_run=args.dry_run, log_ips=args.log_ips)
+    if args.config and not os.path.exists(args.config):
+        print("Unable to locate config file {args.config}", filee=sys.stderr)
+
+    uw = Unwelcome(dry_run=args.dry_run, config_file=args.config, log_ips=args.log_ips)
     uw.precheck()
 
     uw.process_log(from_scratch=args.from_scratch)
