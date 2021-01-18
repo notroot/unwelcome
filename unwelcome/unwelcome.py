@@ -256,17 +256,16 @@ class Unwelcome:
 
         for interval in ban_intervals:
             interval = int(interval['banned_for'])
-            cur = db.execute("SELECT ip FROM unwelcome WHERE date(banned_on, '+%s days') <= date('now');" % interval)
-            ips = cur.fetchall()
+            cur = db.execute("SELECT ip FROM unwelcome WHERE date(banned_on, '+%s days') <= date('now') AND banned_for = %s;" % (interval, interval))
+            hosts = cur.fetchall()
 
-            for ip in ips:
-                ip = ip['ip']
+            for host in hosts:
+                ip = host['ip']
                 FNULL = open(os.devnull, 'w')
                 subprocess.call(['ipset', 'del', 'unwelcome', ip], stdout=FNULL, stderr=subprocess.STDOUT)
+                db.execute("DELETE FROM unwelcome WHERE ip=%s" % ip)
+                db.commit()
                 removed += 1
-
-            db.execute("DELETE FROM unwelcome WHERE date(banned_on, '+%s days') <= date('now');" % interval)
-            db.commit()
 
         logging.info(f"Removed {removed} IPs from unwelcome list")
 
